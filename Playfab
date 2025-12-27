@@ -1,0 +1,123 @@
+// PlayFab Cloud Script: Full Demo
+
+// Maximum coin limits
+const MAX_GOLD = 999999;
+const MAX_SILVER = 99;
+const MAX_COPPER = 99;
+
+// Helper: Adjust currency with rollover and limits
+function adjustCoins(current, change) {
+    let gold = current.GD || 0;
+    let silver = current.SV || 0;
+    let copper = current.CP || 0;
+
+    copper += change.CP || 0;
+    silver += change.SV || 0;
+    gold += change.GD || 0;
+
+    // Copper to Silver rollover
+    if(copper > MAX_COPPER) {
+        silver += Math.floor(copper / (MAX_COPPER + 1));
+        copper = copper % (MAX_COPPER + 1);
+    }
+    if(copper < 0) copper = 0;
+
+    // Silver to Gold rollover
+    if(silver > MAX_SILVER) {
+        gold += Math.floor(silver / (MAX_SILVER + 1));
+        silver = silver % (MAX_SILVER + 1);
+    }
+    if(silver < 0) silver = 0;
+
+    if(gold > MAX_GOLD) gold = MAX_GOLD;
+    if(gold < 0) gold = 0;
+
+    return { GD: gold, SV: silver, CP: copper };
+}
+
+// ===== Get User Inventory + Coins =====
+handlers.getUserInventory = function(args, context) {
+    var playerId = currentPlayerId;
+    var inventory = server.GetUserInventory({ PlayFabId: playerId }).Inventory || [];
+    var virtualCurrency = server.GetUserInventory({ PlayFabId: playerId }).VirtualCurrency || {};
+    return { Items: inventory, Coins: virtualCurrency };
+};
+
+// ===== Adjust Coins (Buy/Sell) =====
+handlers.adjustCurrency = function(args, context) {
+    var playerId = currentPlayerId;
+    var change = {
+        GD: args.GD || 0,
+        SV: args.SV || 0,
+        CP: args.CP || 0
+    };
+
+    var current = server.GetUserInventory({ PlayFabId: playerId }).VirtualCurrency || {};
+    var updated = adjustCoins(current, change);
+
+    server.SetUserVirtualCurrency({ PlayFabId: playerId, VirtualCurrency: updated });
+
+    return { Success: true, Coins: updated };
+};
+
+// ===== Grant Demo Item =====
+handlers.grantTestItem = function(args, context) {
+    var playerId = currentPlayerId;
+    var itemId = "TEST_ITEM_001"; // demo item
+    server.GrantItemsToUser({ PlayFabId: playerId, ItemIds: [itemId] });
+    return { Success: true, ItemId: itemId };
+};
+
+// ===== Mail System Demo (Stored Locally on Site) =====
+handlers.sendMailDemo = function(args, context) {
+    // Just returns the mail object, storing locally handled by website
+    return {
+        From: args.from,
+        To: args.to,
+        Subject: args.subject,
+        Message: args.message,
+        Items: args.items || [],
+        Coins: args.coins || { GD:0, SV:0, CP:0 },
+        Date: new Date().toISOString()
+    };
+};
+
+// ===== Purchase Item Demo (with Coin Validation) =====
+handlers.purchaseItemDemo = function(args, context) {
+    var playerId = currentPlayerId;
+    var itemId = args.itemId;
+    var cost = args.cost || { GD:0, SV:0, CP:0 };
+
+    var current = server.GetUserInventory({ PlayFabId: playerId }).VirtualCurrency || {};
+    var newCoins = adjustCoins(current, { GD:-cost.GD, SV:-cost.SV, CP:-cost.CP });
+
+    // Prevent negative coins
+    if(newCoins.GD < 0 || newCoins.SV < 0 || newCoins.CP < 0) {
+        return { Success:false, Message:"Not enough coins" };
+    }
+
+    // Deduct coins
+    server.SetUserVirtualCurrency({ PlayFabId: playerId, VirtualCurrency: newCoins });
+
+    // Grant item
+    server.GrantItemsToUser({ PlayFabId: playerId, ItemIds: [itemId] });
+
+    return { Success:true, Coins:newCoins, Item:itemId };
+};
+
+// ===== Sell Item Demo =====
+handlers.sellItemDemo = function(args, context) {
+    var playerId = currentPlayerId;
+    var itemId = args.itemId;
+    var gain = args.gain || { GD:0, SV:0, CP:0 };
+
+    var current = server.GetUserInventory({ PlayFabId: playerId }).VirtualCurrency || {};
+    var newCoins = adjustCoins(current, gain);
+
+    // Remove item
+    server.RevokeInventoryItem({ PlayFabId: playerId, ItemInstanceId: itemId });
+
+    server.SetUserVirtualCurrency({ PlayFabId: playerId, VirtualCurrency: newCoins });
+
+    return { Success:true, Coins:newCoins };
+};
